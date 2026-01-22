@@ -1688,6 +1688,70 @@ app.post('/api/get-backup-scripts', async (req, res) => {
   }
 });
 
+// Get backup themes (supports split configs)
+app.post('/api/get-backup-themes', async (req, res) => {
+  try {
+    const { backupPath } = req.body;
+    let allThemes = [];
+
+    // Helper function to process script data
+    const processThemeData = (data) => {
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        return Object.keys(data).map(themeId => ({
+          id: themeId,
+          ...data[themeId]
+        }));
+      } else if (Array.isArray(data)) {
+        return data;
+      }
+      return [];
+    };
+
+    // Check manifest for split config files
+    try {
+      const manifestPath = path.join(backupPath, '.backup_manifest.json');
+      const manifestData = await fs.readFile(manifestPath, 'utf8');
+      const manifest = JSON.parse(manifestData);
+
+      let themeFiles = null;
+      if (manifest.theme_files) {
+        themeFiles = manifest.theme_files;
+      } else if (manifest.files && manifest.files.root) {
+        themeFiles = manifest.files.root.filter(f =>
+          f.startsWith('themes/') &&
+          f.match(/^[^/]+\/.*\.ya?ml$/) // e.g., "script_dir/utilities.yaml"
+        );
+      }
+
+      if (themeFiles) {
+        for (const file of themeFiles) {
+          try {
+            const filePath = path.join(backupPath, file);
+            const fileData = await loadYamlWithCache(filePath);
+            allThemes = allThemes.concat(processThemeData(fileData));
+          } catch (err) { /* File not found, skip */ }
+        }
+
+        if (allThemes.length > 0) {
+          return res.json({ themes: allThemes });
+        }
+
+        // If no script files in manifest, return empty
+        if (manifest.theme_files) {
+          return res.json({ themes: allThemes });
+        }
+      }
+    } catch (e) {
+      // Manifest missing -> assume old full backup -> proceed to resolve
+    }
+
+    res.json({ themes: allThemes });
+  } catch (error) {
+    console.error('[get-backup-themes] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get backup configs (supports split configs)
 app.post('/api/get-backup-configs', async (req, res) => {
   try {
@@ -1713,13 +1777,13 @@ app.post('/api/get-backup-configs', async (req, res) => {
       const manifestData = await fs.readFile(manifestPath, 'utf8');
       const manifest = JSON.parse(manifestData);
 
-      let scriptFiles = null;
-      if (manifest.script_files) {
+      let configFiles = null;
+      if (manifest.config_files) {
         scriptFiles = manifest.script_files;
       } else if (manifest.files && manifest.files.root) {
         scriptFiles = manifest.files.root.filter(f =>
-          f === 'scripts.yaml' ||
-          f.startsWith('scripts/') ||
+          f === 'configuration.yaml' ||
+          f.startsWith('configs/') ||
           f.match(/^[^/]+\/.*\.ya?ml$/) // e.g., "script_dir/utilities.yaml"
         );
       }
