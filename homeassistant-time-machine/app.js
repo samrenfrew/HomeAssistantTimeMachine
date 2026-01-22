@@ -2754,7 +2754,6 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
     generatedAt: new Date().toISOString(),
     files: {
       root: [],
-      themes: [],
       storage: [],
       esphome: [],
       packages: []
@@ -2806,13 +2805,13 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
 
   // Backup split config directories (automations/, scripts/, etc.)
   // These are directories containing YAML files used via !include_dir_list or !include_dir_named
-  const { automationPaths, scriptPaths, configPaths, automationDirs, scriptDirs, configDirs } = await getConfigFilePaths(configPath);
+  const { automationPaths, scriptPaths, configPaths, themePaths, automationDirs, scriptDirs, configDirs, themeDirs } = await getConfigFilePaths(configPath);
 
   // Record which files are automations and scripts in the manifest (relative to config root)
   manifest.automation_files = automationPaths.map(p => path.relative(configPath, p));
   manifest.script_files = scriptPaths.map(p => path.relative(configPath, p));
 
-  const splitDirs = [...new Set([...automationDirs, ...scriptDirs, ...configDirs])]; // Dedupe
+  const splitDirs = [...new Set([...automationDirs, ...scriptDirs, ...configDirs, ...themeDirs])]; // Dedupe
 
   let copiedSplitCount = 0;
   let skippedSplitCount = 0;
@@ -2864,7 +2863,7 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
 
   // Backup individual split config files (!include path/to/file.yaml)
   // These are specific files detected in configuration.yaml that might be in subdirectories
-  const individuaSplitFiles = [...new Set([...automationPaths, ...scriptPaths, ...configPaths])]
+  const individuaSplitFiles = [...new Set([...automationPaths, ...scriptPaths, ...configPaths, ...themePaths])]
     .filter(f => {
       const rel = path.relative(configPath, f);
       return rel !== 'automations.yaml' && rel !== 'scripts.yaml' && !rel.startsWith('..');
@@ -2905,49 +2904,48 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
   }
 
   // Backup Theme files
+  // const themePath = path.join(configPath, 'themes');
+  // const backupThemePath = path.join(backupPath, 'themes');
+  // let themeDirectoryCreated = false;
+  // let copiedThemeCount = 0;
+  // let skippedThemeCount = 0;
 
-  const themePath = path.join(configPath, 'themes');
-  const backupThemePath = path.join(backupPath, 'themes');
-  let themeDirectoryCreated = false;
-  let copiedThemeCount = 0;
-  let skippedThemeCount = 0;
+  // try {
+  //   let themeFiles = await fs.readdir(themePath);
+  //   themeFiles = themeFiles.filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
+  //   console.log(`[backup-${source}] Found ${themeFiles.length} Theme files to check.`);
+  //   for (const file of themeFiles) {
+  //     const sourcePath = path.join(themePath, file);
+  //     const destPath = path.join(backupThemePath, file);
+  //     try {
+  //       // Smart backup mode: only copy if file has changed
+  //       if (smartBackupEnabled && allBackupPaths.length > 0) {
+  //         const changed = await hasFileChanged(sourcePath, allBackupPaths, path.join('themes', file));
+  //         if (!changed) {
+  //           skippedThemeCount++;
+  //           continue;
+  //         }
+  //       }
 
-  try {
-    let themeFiles = await fs.readdir(themePath);
-    themeFiles = themeFiles.filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
-    console.log(`[backup-${source}] Found ${themeFiles.length} Theme files to check.`);
-    for (const file of themeFiles) {
-      const sourcePath = path.join(themePath, file);
-      const destPath = path.join(backupThemePath, file);
-      try {
-        // Smart backup mode: only copy if file has changed
-        if (smartBackupEnabled && allBackupPaths.length > 0) {
-          const changed = await hasFileChanged(sourcePath, allBackupPaths, path.join('themes', file));
-          if (!changed) {
-            skippedThemeCount++;
-            continue;
-          }
-        }
+  //       // Create directory only when first file needs to be copied
+  //       if (!themeDirectoryCreated) {
+  //         await fs.mkdir(backupThemePath, { recursive: true });
+  //         themeDirectoryCreated = true;
+  //       }
 
-        // Create directory only when first file needs to be copied
-        if (!themeDirectoryCreated) {
-          await fs.mkdir(backupThemePath, { recursive: true });
-          themeDirectoryCreated = true;
-        }
-
-        await fs.copyFile(sourcePath, destPath);
-        manifest.files.themes.push(file); // Only add to manifest if file was actually copied
-        copiedThemeCount++;
-      } catch (err) {
-        if (err.code !== 'ENOENT') {
-          console.error(`[backup-${source}] Error copying Theme file ${file}:`, err.message);
-        }
-      }
-    }
-    console.log(`[backup-${source}] Copied ${copiedThemeCount} Theme files${smartBackupEnabled ? `, skipped ${skippedThemeCount} unchanged` : ''}.`);
-  } catch (err) {
-    console.error(`[backup-${source}] Error reading themes directory:`, err.message);
-  }
+  //       await fs.copyFile(sourcePath, destPath);
+  //       manifest.files.themes.push(file); // Only add to manifest if file was actually copied
+  //       copiedThemeCount++;
+  //     } catch (err) {
+  //       if (err.code !== 'ENOENT') {
+  //         console.error(`[backup-${source}] Error copying Theme file ${file}:`, err.message);
+  //       }
+  //     }
+  //   }
+  //   console.log(`[backup-${source}] Copied ${copiedThemeCount} Theme files${smartBackupEnabled ? `, skipped ${skippedThemeCount} unchanged` : ''}.`);
+  // } catch (err) {
+  //   console.error(`[backup-${source}] Error reading themes directory:`, err.message);
+  // }
 
 
   // Backup Lovelace files
@@ -3228,11 +3226,11 @@ app.post('/api/get-backup-theme', async (req, res) => {
       const manifestPath = path.join(backupPath, '.backup_manifest.json');
       const manifestData = await fs.readFile(manifestPath, 'utf8');
       const manifest = JSON.parse(manifestData);
-      if (manifest.files && manifest.files.themes) {
+      if (manifest.files && manifest.files.root) {
         // Use manifest list (already relative to .storage if it was just filenames)
         // Wait, logic in performBackup: manifest.files.storage.push(file) where file is just filename
         // Filter for 'lovelace' prefix
-        const themeFiles = manifest.files.themes.filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
+        const themeFiles = manifest.files.root.filter(f => f.startsWith('themes') && (f.endsWith('.yaml') || f.endsWith('.yml')));
         return res.json({ themeFiles });
       }
     } catch (e) {
