@@ -320,10 +320,12 @@ async function getConfigFilePaths(configPath) {
   const configFile = path.join(configPath, 'configuration.yaml');
   const automationPaths = [];
   const scriptPaths = [];
-  const configPaths = []
+  const configPaths = [];
+  const themePaths = [];
   const automationDirs = [];
   const scriptDirs = [];
   const configDirs = [];
+  const themeDirs = [];
 
   try {
     const configContent = await fs.readFile(configFile, 'utf-8');
@@ -345,6 +347,13 @@ async function getConfigFilePaths(configPath) {
       if (scriptIncludeMatch) {
         const file = scriptIncludeMatch[1].trim();
         scriptPaths.push(path.join(configPath, file));
+      }
+
+      // Match theme: !include filename.yaml
+      const themeIncludeMatch = trimmedLine.match(/^themes:\s*!include\s+(.+)$/);
+      if (themeIncludeMatch) {
+        const file = themeIncludeMatch[1].trim();
+        themePaths.push(path.join(configPath, file));
       }
 
       // Match automation: !include_dir_list dir_name or !include_dir_merge_list dir_name
@@ -382,32 +391,53 @@ async function getConfigFilePaths(configPath) {
           debugLog(`[getConfigFilePaths] Could not read script directory ${fullDir}:`, err.message);
         }
       }
-    }
 
-    // Match config: !include filename.yaml
-    const configIncludeMatch = trimmedLine.match(/^(?!script|automation)(.+?):\s*!include\s+(.+)$/);
-    if (configIncludeMatch) {
-      const file = configIncludeMatch[2].trim();
-      configPaths.push(path.join(configPath, file));
-    }
-
-    // Match config: !include_dir_list dir_name or !include_dir_merge_list dir_name
-    const configDirListMatch = trimmedLine.match(/^(?!script|automation):\s*!include_dir_(?:merge_)?list\s+(.+)$/);
-    if (configDirListMatch) {
-      const dir = configDirListMatch[1].trim();
-      const fullDir = path.join(configPath, dir);
-      configDirs.push(fullDir);
-      try {
-        const files = await fs.readdir(fullDir);
-        for (const file of files) {
-          if (file.endsWith('.yaml') || file.endsWith('.yml')) {
-            configPaths.push(path.join(fullDir, file));
+      // Match themes: !include_dir_named dir_name or !include_dir_merge_named dir_name
+      const themeDirNamedMatch = trimmedLine.match(/^themes:\s*!include_dir_(?:merge_)?named\s+(.+)$/);
+      if (themeDirNamedMatch) {
+        const dir = themeDirNamedMatch[1].trim();
+        const fullDir = path.join(configPath, dir);
+        themeDirs.push(fullDir);
+        try {
+          const files = await fs.readdir(fullDir);
+          for (const file of files) {
+            if (file.endsWith('.yaml') || file.endsWith('.yml')) {
+              themePaths.push(path.join(fullDir, file));
+            }
           }
+        } catch (err) {
+          debugLog(`[getConfigFilePaths] Could not read theme directory ${fullDir}:`, err.message);
         }
-      } catch (err) {
-        debugLog(`[getConfigFilePaths] Could not read config directory ${fullDir}:`, err.message);
+      }
+
+      // Match config: !include filename.yaml
+      const configIncludeMatch = trimmedLine.match(/^(?!script|automation|themes)(.+?):\s*!include\s+(.+)$/);
+      if (configIncludeMatch) {
+        const file = configIncludeMatch[2].trim();
+        configPaths.push(path.join(configPath, file));
+      }
+
+      // Match config: !include_dir_list dir_name or !include_dir_merge_list dir_name
+      const configDirListMatch = trimmedLine.match(/^(?!script|automation|themes):\s*!include_dir_(?:merge_)?list\s+(.+)$/);
+      if (configDirListMatch) {
+        const dir = configDirListMatch[1].trim();
+        const fullDir = path.join(configPath, dir);
+        configDirs.push(fullDir);
+        try {
+          const files = await fs.readdir(fullDir);
+          for (const file of files) {
+            if (file.endsWith('.yaml') || file.endsWith('.yml')) {
+              configPaths.push(path.join(fullDir, file));
+            }
+          }
+        } catch (err) {
+          debugLog(`[getConfigFilePaths] Could not read config directory ${fullDir}:`, err.message);
+        }
       }
     }
+
+    // Just push the main configuration.yaml file to configPaths
+    configPaths.push(path.join(configPath, 'configuration.yaml'));
 
     // Default fallback if nothing found in config
     if (automationPaths.length === 0) {
@@ -415,9 +445,6 @@ async function getConfigFilePaths(configPath) {
     }
     if (scriptPaths.length === 0) {
       scriptPaths.push(path.join(configPath, 'scripts.yaml'));
-    }
-    if (configPaths.length === 0) {
-      scriptPaths.push(path.join(configPath, 'configuration.yaml'));
     }
 
   } catch (error) {
@@ -430,12 +457,14 @@ async function getConfigFilePaths(configPath) {
 
   debugLog('[getConfigFilePaths] Automation paths:', automationPaths);
   debugLog('[getConfigFilePaths] Script paths:', scriptPaths);
+  debugLog('[getConfigFilePaths] Theme paths:', themePaths);
   debugLog('[getConfigFilePaths] Config paths:', configPaths);
   debugLog('[getConfigFilePaths] Automation dirs:', automationDirs);
   debugLog('[getConfigFilePaths] Script dirs:', scriptDirs);
+  debugLog('[getConfigFilePaths] Theme dirs:', themeDirs);
   debugLog('[getConfigFilePaths] Config dirs:', configDirs);
 
-  return { automationPaths, scriptPaths, configPaths, automationDirs, scriptDirs, configDirs };
+  return { automationPaths, scriptPaths, configPaths, themePaths, automationDirs, scriptDirs, configDirs, themeDirs };
 }
 
 
@@ -1012,12 +1041,12 @@ app.post('/api/scan-backups', async (req, res) => {
               hasRelevantFiles = manifest.files?.root?.includes('scripts.yaml') ?? false;
               break;
             case 'configs':
-              // Check if automations.yaml is in root files
+              // Check if configuration.yaml is in root files
               hasRelevantFiles = manifest.files?.root?.includes('configuration.yaml') ?? false;
               break;
             case 'themes':
-              // Check if any themes files are in storage
-              hasRelevantFiles = (manifest.files?.themes?.some(f => f.endsWith('.yaml') || f.endsWith('.yml'))) ?? false;
+              // Check if any themes files are in root files
+              hasRelevantFiles = (manifest.files?.root?.some(f => f.startsWith('themes') && (f.endsWith('.yaml') || f.endsWith('.yml')))) ?? false;
               break;
             case 'lovelace':
               // Check if any lovelace files are in storage
@@ -1131,6 +1160,8 @@ async function checkSnapshotHasChanges(backupPath, configPath, mode) {
     return await checkAutomationsChanges(backupPath, configPath);
   } else if (mode === 'scripts') {
     return await checkScriptsChanges(backupPath, configPath);
+  } else if (mode === 'themes') {
+    return await checkThemeChanges(backupPath, configPath);
   } else if (mode === 'configs') {
     return await checkConfigsChanges(backupPath, configPath);
   } else if (mode === 'lovelace') {
@@ -1285,6 +1316,66 @@ async function checkScriptsChanges(backupPath, configPath) {
   }
 }
 
+// Check themes for changes (supports split configs)
+async function checkThemeChanges(backupPath, configPath) {
+  try {
+    // Get all config file paths from configuration.yaml
+    const { configPaths } = await getConfigFilePaths(configPath);
+
+    // Load backup configs
+    let backupConfigs = {};
+    const manifestPath = path.join(backupPath, '.backup_manifest.json');
+    try {
+      const manifestData = await fs.readFile(manifestPath, 'utf8');
+      const manifest = JSON.parse(manifestData);
+      let themeFiles = null;
+      if (manifest.theme_files) {
+        themeFiles = manifest.theme_files;
+      } else if (manifest.files && manifest.files.root) {
+        themeFiles = manifest.files.root.filter(f =>
+          f.startsWith('themes/') &&
+          f.match(/^[^/]+\/.*\.ya?ml$/)
+        );
+      }
+
+      if (themeFiles) {
+        for (const file of themeFiles) {
+          try {
+            const filePath = path.join(backupPath, file);
+            const fileData = await loadYamlWithCache(filePath);
+            if (fileData && typeof fileData === 'object' && !Array.isArray(fileData)) {
+              Object.assign(backupConfigs, fileData);
+            }
+          } catch (err) { /* Skip */ }
+        }
+      }
+    } catch (e) {
+    }
+
+    // Load all live configs from all configured paths
+    let liveConfigs = {};
+    for (const filePath of configPaths) {
+      try {
+        const fileData = await loadYamlWithCache(filePath);
+        if (fileData && typeof fileData === 'object' && !Array.isArray(fileData)) {
+          // Merge scripts from this file
+          Object.assign(liveConfigs, fileData);
+        }
+      } catch (err) { /* File not found, skip */ }
+    }
+
+    // Only check for deleted or modified items (not new items, since UI only shows backup items)
+    for (const themeId of Object.keys(backupConfigs)) {
+      if (!liveConfigs[themeId]) return true; // Deleted
+      if (jsyaml.dump(backupConfigs[themeId]) !== jsyaml.dump(liveConfigs[themeId])) return true; // Modified
+    }
+
+    return false;
+  } catch (err) {
+    return false;
+  }
+}
+
 // Check configs for changes (supports split configs)
 async function checkConfigsChanges(backupPath, configPath) {
   try {
@@ -1352,79 +1443,6 @@ async function checkConfigsChanges(backupPath, configPath) {
   }
 }
 
-
-// Helper function to recursively collect theme files with relative paths
-async function collectThemeFilesRecursive(themeDir, relativePrefix = '') {
-  const files = new Map();
-  
-  try {
-    const entries = await fs.readdir(themeDir, { withFileTypes: true });
-    
-    for (const entry of entries) {
-      if (entry.name.startsWith('._')) {
-        continue;
-      }
-      
-      const entryRelativePath = relativePrefix ? path.join(relativePrefix, entry.name) : entry.name;
-      const fullPath = path.join(themeDir, entry.name);
-      
-      if (entry.isSymbolicLink()) {
-        continue;
-      }
-      
-      if (entry.isDirectory()) {
-        // Recursively collect files from subdirectories
-        const subFiles = await collectThemeFilesRecursive(fullPath, entryRelativePath);
-        for (const [relativePath, content] of subFiles) {
-          files.set(relativePath, content);
-        }
-      } else if (entry.isFile() && (entry.name.endsWith('.yaml') || entry.name.endsWith('.yml'))) {
-        try {
-          const content = await fs.readFile(fullPath, 'utf-8');
-          files.set(entryRelativePath, content);
-        } catch (err) {
-          // Skip files we can't read
-        }
-      }
-    }
-  } catch (err) {
-    // Directory doesn't exist or can't be read
-  }
-  
-  return files;
-}
-
-// Check theme files for changes
-async function checkThemeChanges(backupPath, configPath) {
-  try {
-    // Theme files are in themes directory
-    const backupThemeDir = path.join(backupPath, 'themes');
-    const liveThemeDir = path.join(configPath, 'themes');
-
-    // Recursively collect all theme files from both directories
-    const [backupFiles, liveFiles] = await Promise.all([
-      collectThemeFilesRecursive(backupThemeDir),
-      collectThemeFilesRecursive(liveThemeDir)
-    ]);
-
-    // Get all unique file paths
-    const allFilePaths = new Set([...backupFiles.keys(), ...liveFiles.keys()]);
-
-    // Check each file
-    for (const relativePath of allFilePaths) {
-      const backupContent = backupFiles.get(relativePath) || null;
-      const liveContent = liveFiles.get(relativePath) || null;
-
-      if (backupContent === null && liveContent !== null) return true; // Added
-      if (backupContent !== null && liveContent === null) return true; // Deleted
-      if (backupContent !== liveContent) return true; // Modified
-    }
-
-    return false;
-  } catch (err) {
-    return false;
-  }
-}
 
 // Check lovelace files for changes
 async function checkLovelaceChanges(backupPath, configPath) {
@@ -1745,15 +1763,31 @@ app.post('/api/get-backup-configs', async (req, res) => {
 
 
 
-// Get live items (automations or scripts) - supports split configs
+// Get live items (automations, scripts, themes, configs) - supports split configs
 app.post('/api/get-live-items', async (req, res) => {
   try {
     const { itemIdentifiers, mode, liveConfigPath } = req.body;
     const configPath = liveConfigPath || '/config';
 
     // Get all file paths from configuration.yaml
-    const { automationPaths, scriptPaths } = await getConfigFilePaths(configPath);
-    const filePaths = mode === 'automations' ? automationPaths : scriptPaths;
+    const { automationPaths, scriptPaths, themePaths, configPaths } = await getConfigFilePaths(configPath);
+    let filePaths = null;
+    switch(mode) {
+      case 'automations':
+        filePaths = automationPaths;
+        break;
+      case 'scripts':
+        filePaths = scriptPaths;
+        break;
+      case 'themes':
+        filePaths = themePaths;
+        break;
+      case 'configs':
+        filePaths = configPaths;
+        break;
+      default:
+        break;
+    }
 
     // Load all items from all configured paths
     let allItems = [];
@@ -1767,11 +1801,11 @@ app.post('/api/get-live-items', async (req, res) => {
         } else if (mode === 'scripts') {
           // Handle scripts dictionary format
           if (fileData && typeof fileData === 'object' && !Array.isArray(fileData)) {
-            const scriptItems = Object.keys(fileData).map(scriptId => ({
-              id: scriptId,
-              ...fileData[scriptId]
+            const items = Object.keys(fileData).map(id => ({
+              id: id,
+              ...fileData[id]
             }));
-            allItems = allItems.concat(scriptItems);
+            allItems = allItems.concat(items);
           } else if (Array.isArray(fileData)) {
             allItems = allItems.concat(fileData);
           }
@@ -1793,88 +1827,6 @@ app.post('/api/get-live-items', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
-
-// Get live automation (supports split configs)
-app.post('/api/get-live-automation', async (req, res) => {
-  try {
-    const { automationIdentifier, liveConfigPath } = req.body;
-    const configPath = liveConfigPath || '/config';
-
-    // Get all automation file paths from configuration.yaml
-    const { automationPaths } = await getConfigFilePaths(configPath);
-
-    // Search all automation files for the requested automation
-    let automation = null;
-    for (const filePath of automationPaths) {
-      try {
-        const automations = await loadYamlWithCache(filePath) || [];
-        if (Array.isArray(automations)) {
-          automation = automations.find(a => a.id === automationIdentifier || a.alias === automationIdentifier);
-          if (automation) break;
-        }
-      } catch (err) { /* File not found, continue */ }
-    }
-
-    if (!automation) {
-      return res.status(404).json({ error: 'Automation not found' });
-    }
-
-    res.json({ automation });
-  } catch (error) {
-    console.error('[get-live-automation] Error:', error);
-    res.status(404).json({ error: error.message });
-  }
-});
-
-
-// Get live script (supports split configs)
-app.post('/api/get-live-script', async (req, res) => {
-  try {
-    const { automationIdentifier, liveConfigPath } = req.body;
-    const configPath = liveConfigPath || '/config';
-
-    // Get all script file paths from configuration.yaml
-    const { scriptPaths } = await getConfigFilePaths(configPath);
-
-    // Search all script files for the requested script
-    let script = null;
-    for (const filePath of scriptPaths) {
-      try {
-        const scriptsData = await loadYamlWithCache(filePath);
-        // Scripts can be in dictionary format (key: script_id, value: script object)
-        if (scriptsData && typeof scriptsData === 'object' && !Array.isArray(scriptsData)) {
-          if (scriptsData[automationIdentifier]) {
-            script = { id: automationIdentifier, ...scriptsData[automationIdentifier] };
-            break;
-          }
-          // Also search by alias
-          for (const [id, scriptObj] of Object.entries(scriptsData)) {
-            if (scriptObj.alias === automationIdentifier) {
-              script = { id, ...scriptObj };
-              break;
-            }
-          }
-          if (script) break;
-        } else if (Array.isArray(scriptsData)) {
-          // Fallback for array format
-          script = scriptsData.find(s => s.id === automationIdentifier || s.alias === automationIdentifier);
-          if (script) break;
-        }
-      } catch (err) { /* File not found, continue */ }
-    }
-
-    if (!script) {
-      return res.status(404).json({ error: 'Script not found' });
-    }
-
-    res.json({ script });
-  } catch (error) {
-    console.error('[get-live-script] Error:', error);
-    res.status(404).json({ error: error.message });
-  }
-});
-
 
 // Restore automation
 app.post('/api/restore-automation', async (req, res) => {
@@ -2096,6 +2048,113 @@ app.post('/api/restore-script', async (req, res) => {
     res.json({ success: true, message: `Script restored successfully to ${relativeFilePath}` });
   } catch (error) {
     console.error('[restore-script] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Restore script
+app.post('/api/restore-themes', async (req, res) => {
+  try {
+    const { backupPath, automationIdentifier: themeIdentifier, timezone, liveConfigPath, smartBackupEnabled } = req.body;
+
+    if (!backupPath || !themeIdentifier) {
+      return res.status(400).json({ error: 'Missing required parameters: backupPath and themeIdentifier' });
+    }
+
+    // Perform a backup before restoring
+    let effectiveSmartBackup = smartBackupEnabled;
+    if (typeof smartBackupEnabled === 'undefined') {
+      const scheduledJobsData = await loadScheduledJobs();
+      const defaultJob = scheduledJobsData.jobs?.['default-backup-job'] || {};
+      effectiveSmartBackup = defaultJob.smartBackupEnabled ?? false;
+    }
+    await performBackup(liveConfigPath || null, null, 'pre-restore', false, 100, timezone, effectiveSmartBackup);
+
+    const configPath = liveConfigPath || '/config';
+
+    // Find which file in the backup contains the requested theme
+    let relativeFilePath = 'themes';
+    let backupFilePath = null;
+
+    let themeFiles = null;
+    try {
+      const manifestPath = path.join(backupPath, '.backup_manifest.json');
+      const manifestData = await fs.readFile(manifestPath, 'utf8');
+      const manifest = JSON.parse(manifestData);
+
+      if (manifest.theme_files) {
+        themeFiles = manifest.theme_files;
+      } else if (manifest.files && manifest.files.root) {
+        themeFiles = manifest.files.root.filter(f =>
+          f === 'theme.yaml' ||
+          f.startsWith('themes/') ||
+          f.match(/^[^/]+\/.*\.ya?ml$/)
+        );
+      }
+
+      if (themeFiles) {
+        for (const file of themeFiles) {
+          try {
+            const potentialBackupPath = path.join(backupPath, file);
+            const data = await loadYamlWithCache(potentialBackupPath);
+            if (data && typeof data === 'object' && !Array.isArray(data)) {
+              if (data[themeIdentifier] || Object.values(data).some(s => s.alias === themeIdentifier)) {
+                relativeFilePath = file;
+                backupFilePath = potentialBackupPath;
+                break;
+              }
+            }
+          } catch (err) { /* Skip */ }
+        }
+      }
+    } catch (e) { /* Proceed to fallback */ }
+
+    if (!backupFilePath) {
+      backupFilePath = await resolveFileInBackupChain(backupPath, 'scripts.yaml');
+    }
+
+    const liveFilePath = path.join(configPath, relativeFilePath);
+    const backupContent = await fs.readFile(backupFilePath, 'utf-8');
+
+    // Read live contents
+    let liveContent = '';
+    try {
+      liveContent = await fs.readFile(liveFilePath, 'utf-8');
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+      liveContent = '{}';
+    }
+
+    // Parse documents (preserves ranges)
+    const liveDoc = YAML.parseDocument(liveContent);
+    const backupDoc = YAML.parseDocument(backupContent);
+
+    // Find backup node
+    const backupNode = backupDoc.get(themeIdentifier);
+    if (!backupNode) {
+      return res.status(404).json({ error: 'Script not found in backup' });
+    }
+    const [backupStart, backupEnd] = findFullRange(backupContent, backupNode, false);
+    const backupSnippet = backupContent.substring(backupStart, backupEnd);
+
+    // Find live node
+    const liveNode = liveDoc.get(themeIdentifier);
+
+    let newLiveContent;
+    if (liveNode) {
+      const [liveStart, liveEnd] = findFullRange(liveContent, liveNode, false);
+      newLiveContent = liveContent.substring(0, liveStart) + backupSnippet + liveContent.substring(liveEnd);
+    } else {
+      const prefix = (liveContent.length > 0 && !liveContent.endsWith('\n')) ? '\n' : '';
+      newLiveContent = liveContent + prefix + backupSnippet;
+    }
+
+    // Write back
+    await fs.writeFile(liveFilePath, newLiveContent, 'utf-8');
+
+    res.json({ success: true, message: `Theme restored successfully to ${relativeFilePath}` });
+  } catch (error) {
+    console.error('[restore-theme] Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -2759,7 +2818,9 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
       packages: []
     },
     automation_files: [],
-    script_files: []
+    script_files: [],
+    theme_files: [],
+    config_files: []
   };
 
   try {
@@ -2807,9 +2868,11 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
   // These are directories containing YAML files used via !include_dir_list or !include_dir_named
   const { automationPaths, scriptPaths, configPaths, themePaths, automationDirs, scriptDirs, configDirs, themeDirs } = await getConfigFilePaths(configPath);
 
-  // Record which files are automations and scripts in the manifest (relative to config root)
+  // Record which files are automations, scripts, themes and configs in the manifest (relative to config root)
   manifest.automation_files = automationPaths.map(p => path.relative(configPath, p));
   manifest.script_files = scriptPaths.map(p => path.relative(configPath, p));
+  manifest.theme_files = themePaths.map(p => path.relative(configPath, p));
+  manifest.config_files = configPaths.map(p => path.relative(configPath, p));
 
   const splitDirs = [...new Set([...automationDirs, ...scriptDirs, ...configDirs, ...themeDirs])]; // Dedupe
 
@@ -2863,16 +2926,16 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
 
   // Backup individual split config files (!include path/to/file.yaml)
   // These are specific files detected in configuration.yaml that might be in subdirectories
-  const individuaSplitFiles = [...new Set([...automationPaths, ...scriptPaths, ...configPaths, ...themePaths])]
+  const individualSplitFiles = [...new Set([...automationPaths, ...scriptPaths, ...configPaths, ...themePaths])]
     .filter(f => {
       const rel = path.relative(configPath, f);
-      return rel !== 'automations.yaml' && rel !== 'scripts.yaml' && !rel.startsWith('..');
+      return rel !== 'automations.yaml' && rel !== 'scripts.yaml' && rel !== 'configuration.yaml' && !rel.startsWith('..');
     });
 
   let copiedIndividualCount = 0;
   let skippedIndividualCount = 0;
 
-  for (const srcFile of individuaSplitFiles) {
+  for (const srcFile of individualSplitFiles) {
     const relativePath = path.relative(configPath, srcFile);
     const destFile = path.join(backupPath, relativePath);
 
@@ -2899,57 +2962,11 @@ async function performBackup(liveConfigPath, backupFolderPath, source = 'manual'
     }
   }
 
-  if (individuaSplitFiles.length > 0) {
+  if (individualSplitFiles.length > 0) {
     console.log(`[backup-${source}] Copied ${copiedIndividualCount} individual split files${smartBackupEnabled ? `, skipped ${skippedIndividualCount} unchanged` : ''}.`);
   }
 
-  // Backup Theme files
-  // const themePath = path.join(configPath, 'themes');
-  // const backupThemePath = path.join(backupPath, 'themes');
-  // let themeDirectoryCreated = false;
-  // let copiedThemeCount = 0;
-  // let skippedThemeCount = 0;
-
-  // try {
-  //   let themeFiles = await fs.readdir(themePath);
-  //   themeFiles = themeFiles.filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
-  //   console.log(`[backup-${source}] Found ${themeFiles.length} Theme files to check.`);
-  //   for (const file of themeFiles) {
-  //     const sourcePath = path.join(themePath, file);
-  //     const destPath = path.join(backupThemePath, file);
-  //     try {
-  //       // Smart backup mode: only copy if file has changed
-  //       if (smartBackupEnabled && allBackupPaths.length > 0) {
-  //         const changed = await hasFileChanged(sourcePath, allBackupPaths, path.join('themes', file));
-  //         if (!changed) {
-  //           skippedThemeCount++;
-  //           continue;
-  //         }
-  //       }
-
-  //       // Create directory only when first file needs to be copied
-  //       if (!themeDirectoryCreated) {
-  //         await fs.mkdir(backupThemePath, { recursive: true });
-  //         themeDirectoryCreated = true;
-  //       }
-
-  //       await fs.copyFile(sourcePath, destPath);
-  //       manifest.files.themes.push(file); // Only add to manifest if file was actually copied
-  //       copiedThemeCount++;
-  //     } catch (err) {
-  //       if (err.code !== 'ENOENT') {
-  //         console.error(`[backup-${source}] Error copying Theme file ${file}:`, err.message);
-  //       }
-  //     }
-  //   }
-  //   console.log(`[backup-${source}] Copied ${copiedThemeCount} Theme files${smartBackupEnabled ? `, skipped ${skippedThemeCount} unchanged` : ''}.`);
-  // } catch (err) {
-  //   console.error(`[backup-${source}] Error reading themes directory:`, err.message);
-  // }
-
-
   // Backup Lovelace files
-
   const storagePath = path.join(configPath, '.storage');
   const backupStoragePath = path.join(backupPath, '.storage');
   let storageDirectoryCreated = false;
@@ -3213,140 +3230,6 @@ app.post('/api/backup-now', async (req, res) => {
       errorCode: error.code || 'BACKUP_FAILED',
       meta: error.meta || null
     });
-  }
-});
-
-// Theme endpoints
-app.post('/api/get-backup-theme', async (req, res) => {
-  try {
-    const { backupPath } = req.body;
-
-    // Check manifest
-    try {
-      const manifestPath = path.join(backupPath, '.backup_manifest.json');
-      const manifestData = await fs.readFile(manifestPath, 'utf8');
-      const manifest = JSON.parse(manifestData);
-      if (manifest.files && manifest.files.root) {
-        // Use manifest list (already relative to .storage if it was just filenames)
-        // Wait, logic in performBackup: manifest.files.storage.push(file) where file is just filename
-        // Filter for 'lovelace' prefix
-        const themeFiles = manifest.files.root.filter(f => f.startsWith('themes') && (f.endsWith('.yaml') || f.endsWith('.yml')));
-        return res.json({ themeFiles });
-      }
-    } catch (e) {
-      // Fallback to directory scan
-    }
-
-    const themeDir = path.join(backupPath, 'themes');
-    const files = await fs.readdir(themeDir);
-    const themeFiles = files.filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
-
-    res.json({ themeFiles });
-  } catch (error) {
-    console.error('[get-backup-themes] Error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/get-backup-theme-file', async (req, res) => {
-  try {
-    const { backupPath, fileName } = req.body;
-
-    // Use chain resolution
-    const filePath = await resolveFileInBackupChain(backupPath, path.join('themes', fileName));
-
-    console.log(`[get-backup-theme-file] Request for file: ${fileName} in backup: ${backupPath} -> Resolved: ${filePath}`);
-
-    res.sendFile(filePath, (err) => {
-      if (err) {
-        console.error('[get-backup-theme-file] Error sending file:', err);
-        res.status(err.status || 500).json({ error: err.message });
-      }
-    });
-  } catch (error) {
-    console.error('[get-backup-theme-file] Error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-const getLiveThemeFile = async (req, res) => {
-  try {
-    const payload = req.method === 'GET' ? req.query : req.body;
-    const fileName = payload?.fileName;
-    const liveConfigPath = payload?.liveConfigPath;
-
-    if (!fileName) {
-      return res.status(400).json({ error: 'fileName is required' });
-    }
-
-    const configPath = liveConfigPath || '/config';
-    const filePath = path.join(configPath, 'themes', fileName);
-
-    console.log(`[get-live-theme-file] Request for file: ${fileName} in config: ${configPath}`);
-
-    res.sendFile(filePath, (err) => {
-      if (err) {
-        console.error('[get-live-theme-file] Error sending file:', err);
-        res.status(err.status || 404).json({ error: 'File not found' });
-      }
-    });
-  } catch (error) {
-    console.error('[get-live-theme-file] Error:', error);
-    res.status(404).json({ error: 'File not found' });
-  }
-};
-
-app.get('/api/get-live-theme-file', getLiveThemeFile);
-app.post('/api/get-live-theme-file', getLiveThemeFile);
-
-app.post('/api/restore-theme-file', async (req, res) => {
-  try {
-    const { fileName, backupPath, content, timezone, liveConfigPath, smartBackupEnabled } = req.body;
-
-    if (!fileName) {
-      return res.status(400).json({ error: 'fileName is required' });
-    }
-
-    if (!backupPath && typeof content === 'undefined') {
-      return res.status(400).json({ error: 'backupPath or content is required' });
-    }
-
-    // Perform a backup before restoring - respect Smart Backup setting
-    // If smartBackupEnabled not explicitly provided, read from scheduled jobs settings
-    let effectiveSmartBackup = smartBackupEnabled;
-    if (typeof smartBackupEnabled === 'undefined') {
-      const scheduledJobsData = await loadScheduledJobs();
-      const defaultJob = scheduledJobsData.jobs?.['default-backup-job'] || {};
-      effectiveSmartBackup = defaultJob.smartBackupEnabled ?? false;
-    }
-    await performBackup(liveConfigPath || null, null, 'pre-restore', false, 100, timezone, effectiveSmartBackup);
-
-    const configPath = liveConfigPath || '/config';
-    const targetFilePath = path.join(configPath, '.storage', fileName);
-    await fs.mkdir(path.dirname(targetFilePath), { recursive: true });
-
-    if (backupPath) {
-      const sourceFilePath = path.join(backupPath, '.storage', fileName);
-      try {
-        await fs.copyFile(sourceFilePath, targetFilePath);
-      } catch (copyError) {
-        console.error('[restore-theme-file] Copy from backup failed, falling back to write:', copyError.message);
-        const backupContent = await fs.readFile(sourceFilePath, 'utf-8');
-        await fs.writeFile(targetFilePath, backupContent, 'utf-8');
-      }
-    } else {
-      const contentToWrite = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-      await fs.writeFile(targetFilePath, contentToWrite, 'utf-8');
-    }
-
-    // Check if HA config is available to determine if a restart is needed
-    const auth = await getHomeAssistantAuth();
-    const needsRestart = !!(auth.baseUrl && auth.token);
-
-    res.json({ success: true, message: 'Theme file restored successfully', needsRestart });
-  } catch (error) {
-    console.error('[restore-theme-file] Error:', error);
-    res.status(500).json({ error: error.message });
   }
 });
 
