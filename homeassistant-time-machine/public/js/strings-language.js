@@ -320,6 +320,22 @@ window.STRINGS = {
         nl: "Scripts",
         it: "Script"
       },
+      configs: {
+        en: "Configs",
+        es: "Configuraciones",
+        de: "Konfigurationen",
+        fr: "Configurations",
+        nl: "Configuraties",
+        it: "Configurazioni"
+      },
+      themes: {
+        en: "Themes",
+        es: "Temas",
+        de: "Themen",
+        fr: "Thèmes",
+        nl: "Themas",
+        it: "Temi"
+      },
       lovelace: {
         en: "Lovelace",
         es: "Lovelace",

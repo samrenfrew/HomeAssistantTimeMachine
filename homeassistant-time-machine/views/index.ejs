@@ -228,6 +228,8 @@
     <div class="tabs">
       <button class="tab active" data-tab="automations" id="automationsTab">Automations</button>
       <button class="tab" data-tab="scripts" id="scriptsTab">Scripts</button>
+      <button class="tab" data-tab="themes" id="themesTab">Themes</button>
+      <button class="tab" data-tab="configs" id="configsTab">Configs</button>
       <button class="tab" data-tab="lovelace" id="lovelaceTab">Lovelace</button>
       <button class="tab" data-tab="esphome" id="esphomeTab" <% if (!esphomeEnabled) { %>style="display: none;"<% } %>
           >ESPHome</button>
@@ -410,6 +412,8 @@
       // Update tab buttons
       document.getElementById('automationsTab').textContent = getStyledText('ui.buttons.automations');
       document.getElementById('scriptsTab').textContent = getStyledText('ui.buttons.scripts');
+      document.getElementById('themesTab').textContent = getStyledText('ui.buttons.themes');
+      document.getElementById('configsTab').textContent = getStyledText('ui.buttons.configs');
       document.getElementById('lovelaceTab').textContent = getStyledText('ui.buttons.lovelace');
       document.getElementById('esphomeTab').textContent = getStyledText('ui.buttons.esphome');
       document.getElementById('packagesTab').textContent = getStyledText('ui.buttons.packages');
@@ -449,14 +453,7 @@
       const showOnlyChangesCheckbox = document.getElementById('showOnlyChangesEnabled');
       if (showOnlyChangesCheckbox) {
         showOnlyChangesCheckbox.checked = showOnlyChanges;
-      }
-
-      // Update empty state message
-      const emptyStateMode = getStyledText(`ui.buttons.${currentMode}`) || currentMode;
-      const emptyStateEl = document.getElementById('emptyStateMessage');
-      if (emptyStateEl) {
-        emptyStateEl.textContent = getStyledText('ui.itemsList.selectBackup', { mode: emptyStateMode });
-      }
+      }   
 
       // Update placeholders
       updatePlaceholders();
@@ -630,6 +627,12 @@
       if (haConfig && haConfig.haAuthMode === 'supervisor') {
         if (haUrlInput) haUrlInput.placeholder = getStyledText('ui.placeholders.managedByHA');
         if (haTokenInput) haTokenInput.placeholder = getStyledText('ui.placeholders.managedByHA');
+      }
+
+      // Update empty state message
+      const emptyStateEl = document.getElementById('emptyStateMessage');
+      if (emptyStateEl) {
+        emptyStateEl.textContent = getStyledText('ui.itemsList.selectBackup', { mode: currentTabName });
       }
     }
 
@@ -873,7 +876,9 @@
 
 
       // Load items based on current mode
-      if (currentMode === 'lovelace') {
+      if (currentMode === 'themes') {
+        await loadThemeFiles();
+      } else if (currentMode === 'lovelace') {
         await loadLovelaceFiles();
       } else if (currentMode === 'esphome') {
         await loadEsphomeFiles();
@@ -920,9 +925,10 @@
       setListLoading(true, currentMode);
 
       try {
-        const endpoint = currentMode === 'automations'
-          ? '/api/get-backup-automations'
-          : '/api/get-backup-scripts';
+        const endpoint = `/api/get-backup-${currentMode}`
+        // const endpoint = currentMode === 'automations'
+        //   ? '/api/get-backup-automations'
+        //   : '/api/get-backup-scripts';
 
         const response = await fetch(url(endpoint), {
           method: 'POST',
@@ -931,7 +937,7 @@
         });
 
         const data = await response.json();
-        allItems = data.automations || data.scripts || [];
+        allItems = data.automations || data.scripts || data.configs || [];
 
         if (allItems.length === 0) {
           document.getElementById('itemsList').innerHTML = `<p class="empty-state">${getStyledText('ui.itemsList.noItems', { mode: currentMode })}</p>`;
@@ -1069,7 +1075,7 @@
         return;
       }
 
-      // Automations/Scripts default behaviour
+      // Automations/Scripts/Configs default behaviour
       if (!Array.isArray(allItems)) {
         allItems = [];
       }
@@ -1223,7 +1229,7 @@
       if (!selectedItem) return;
 
       try {
-        const endpoint = currentMode === 'automations' ? '/api/restore-automation' : '/api/restore-script';
+        const endpoint = `/api/restore-${currentMode}`;
         const identifier = selectedItem.id || selectedItem.alias;
         const body = {
           backupPath: currentBackupPath,
@@ -1244,9 +1250,11 @@
 
         document.getElementById('diffModal').style.display = 'none';
 
+        // TODO: update?
         const modeLabel = currentMode === 'automations' ? 'Automation' : 'Script';
 
         // Reload Home Assistant if configured
+        // TODO: update this for configs?
         if (haConfig && haConfig.haAuthConfigured) {
           const service = currentMode === 'automations' ? 'automation.reload' : 'script.reload';
           try {
@@ -1275,6 +1283,13 @@
       }
     }
 
+    // Theme files state
+    let themeFiles = [];
+    let themeFileStatuses = {};
+    let selectedThemeFile = null;
+    let themeBackupContent = '';
+    let themeLiveContent = null;
+
     // Lovelace files state
     let lovelaceFiles = [];
     let lovelaceFileStatuses = {};
@@ -1295,6 +1310,348 @@
     let selectedPackagesFile = null;
     let packagesBackupContent = '';
     let packagesLiveContent = null;
+
+    // Load Theme files
+    async function loadThemeFiles() {
+      if (!currentBackupPath) return;
+
+      setListLoading(true, 'themes');
+
+      try {
+        const response = await fetch(url('/api/get-backup-themes'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ backupPath: currentBackupPath })
+        });
+        const data = await response.json();
+        const fileNames = data.themeFiles || [];
+        themeFiles = [];
+        themeFileStatuses = {};
+
+        for (const fileName of fileNames) {
+          let status = 'unchanged';
+          try {
+            const liveParams = new URLSearchParams({ fileName });
+            if (haConfig?.liveConfigPath) {
+              liveParams.append('liveConfigPath', haConfig.liveConfigPath);
+            }
+            const liveResp = await fetch(url(`/api/get-live-theme-file?${liveParams.toString()}`));
+            if (liveResp.ok) {
+              const liveData = await liveResp.text();
+              const backupResp = await fetch(url('/api/get-backup-theme-file'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ backupPath: currentBackupPath, fileName })
+              });
+              const backupData = await backupResp.text();
+              if (backupData !== liveData) {
+                status = 'changed';
+              }
+            } else {
+              status = 'deleted';
+            }
+          } catch (err) {
+            console.error('Error checking Theme file status:', err);
+          }
+          themeFiles.push({ name: fileName, status });
+          themeFileStatuses[fileName] = status;
+        }
+        applyFilters(); // Use applyFilters to apply showOnlyChanges filtering
+      } catch (error) {
+        console.error('[loadThemeFiles] Error:', error);
+        document.getElementById('itemsList').innerHTML = `<p class="error">${applyTextStyle('Error loading Theme files: ' + error.message, 'error')}</p>`;
+      } finally {
+        setListLoading(false, 'lovelace');
+      }
+    }
+
+    // Render Theme files
+    function renderThemeFiles(files) {
+      const itemsList = document.getElementById('itemsList');
+      if (files.length === 0) {
+        itemsList.innerHTML = `<p class="empty-state">${getStyledText('ui.theme.noFiles')}</p>`;
+        return;
+      }
+      itemsList.innerHTML = files.map((file, idx) => {
+        const status = themeFileStatuses[file.name] || '';
+        const statusBadge = status === 'changed' ? `<span class="badge badge-changed">${getStyledText('ui.badges.changed')}</span>` :
+          status === 'deleted' ? `<span class="badge badge-deleted">${getStyledText('ui.badges.deleted')}</span>` : '';
+        return `
+          <div class="list-item" data-index="${idx}">
+            <div class="item-content">
+              <span class="dot"></span>
+              <span>${file.name}</span>
+            </div>
+            <div class="item-badges">
+              ${statusBadge}
+              <svg class="chevron" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+              </svg>
+            </div>
+          </div>
+        `;
+      }).join('');
+      document.querySelectorAll('#itemsList .list-item').forEach((item, idx) => {
+        item.addEventListener('click', async () => {
+          const file = files[idx];
+          selectedthemeFile = file;
+          themeBackupContent = '';
+          themeLiveContent = null;
+          try {
+            const backupResp = await fetch(url('/api/get-backup-theme-file'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ backupPath: currentBackupPath, fileName: file.name })
+            });
+            themeBackupContent = await backupResp.text();
+            if (file.status !== 'deleted') {
+              const liveParams = new URLSearchParams({ fileName: file.name });
+              if (haConfig?.liveConfigPath) {
+                liveParams.append('liveConfigPath', haConfig.liveConfigPath);
+              }
+              const liveResp = await fetch(url(`/api/get-live-theme-file?${liveParams.toString()}`));
+              if (liveResp.ok) {
+                themeLiveContent = await liveResp.text();
+              }
+            }
+
+            // Generate split diff with paired columns
+            function generateDiff(oldText, newText, options = {}) {
+              const { leftLabel = getStyledText('ui.diffViewer.liveVersion') || 'Live version', rightLabel = getStyledText('ui.diffViewer.backupVersion') || 'Backup version', rightMeta = '', bannerText = '' } = options;
+
+              const diff = Diff.diffLines(oldText, newText);
+              const MAX_CONTEXT_LINES = 12;
+
+              const diffLines = [];
+              let oldLineNum = 1;
+              let newLineNum = 1;
+
+              diff.forEach(part => {
+                let lines = part.value.split('\n');
+                if (lines.length && lines[lines.length - 1] === '') {
+                  lines.pop();
+                }
+
+                if (part.added) {
+                  lines.forEach(line => {
+                    diffLines.push({ type: 'added', text: line, oldLine: null, newLine: newLineNum });
+                    newLineNum++;
+                  });
+                } else if (part.removed) {
+                  lines.forEach(line => {
+                    diffLines.push({ type: 'removed', text: line, oldLine: oldLineNum, newLine: null });
+                    oldLineNum++;
+                  });
+                } else {
+                  lines.forEach(line => {
+                    diffLines.push({ type: 'context', text: line, oldLine: oldLineNum, newLine: newLineNum });
+                    oldLineNum++;
+                    newLineNum++;
+                  });
+                }
+              });
+
+              const hunks = [];
+              let index = 0;
+
+              while (index < diffLines.length) {
+                while (index < diffLines.length && diffLines[index].type === 'context') {
+                  index++;
+                }
+
+                if (index >= diffLines.length) break;
+
+                let hunkStart = Math.max(0, index - MAX_CONTEXT_LINES);
+                let hunkEnd = index;
+                let postContextCount = 0;
+
+                while (hunkEnd < diffLines.length) {
+                  const line = diffLines[hunkEnd];
+                  if (line.type === 'context') {
+                    postContextCount++;
+                    if (postContextCount > MAX_CONTEXT_LINES) {
+                      break;
+                    }
+                  } else {
+                    postContextCount = 0;
+                  }
+                  hunkEnd++;
+                }
+
+                const hunkLines = diffLines.slice(hunkStart, hunkEnd);
+                const firstChangeIndex = hunkLines.findIndex(line => line.type !== 'context');
+
+                const contextBefore = firstChangeIndex > 0 ? hunkLines.slice(0, firstChangeIndex) : [];
+                const lines = firstChangeIndex >= 0 ? hunkLines.slice(firstChangeIndex) : hunkLines.slice();
+
+                const oldLines = hunkLines.filter(line => line.oldLine !== null);
+                const newLines = hunkLines.filter(line => line.newLine !== null);
+
+                hunks.push({
+                  oldStart: oldLines.length ? oldLines[0].oldLine : 1,
+                  newStart: newLines.length ? newLines[0].newLine : 1,
+                  oldCount: oldLines.length,
+                  newCount: newLines.length,
+                  contextBefore,
+                  lines
+                });
+
+                index = hunkEnd;
+              }
+
+              if (!hunks.length) {
+                return `
+          <div class="diff-empty-state">
+            <div class="diff-empty-card">
+              <h3>No visible differences</h3>
+              <p>Everything matches between backup and live.</p>
+            </div>
+          </div>
+        `;
+              }
+
+              return `
+        <div class="diff-banners-grid diff-banners-grid--standalone">
+          <div class="diff-state-banner diff-state-banner-current diff-state-banner--header"><span class="diff-state-label">${getStyledText('ui.diffViewer.currentVersion')}</span></div>
+          ${bannerText ? `<div class="diff-state-banner diff-state-banner-changed diff-state-banner--header"><span class="diff-state-label">${escapeHtml(bannerText)}</span></div>` : '<div class="diff-state-banner diff-state-banner-empty diff-state-banner--header"></div>'}
+        </div>
+        <div class="diff-viewer-shell">
+          <div class="diff-palette-bar">
+            <span class="diff-palette-label">Theme:</span>
+            <div class="diff-palette-btn active" data-palette="1" onclick="setDiffPalette(1)" title="Original"><div class="diff-palette-btn-left"></div><div class="diff-palette-btn-right"></div></div>
+            <div class="diff-palette-btn" data-palette="2" onclick="setDiffPalette(2)" title="Rose & Emerald"><div class="diff-palette-btn-left"></div><div class="diff-palette-btn-right"></div></div>
+            <div class="diff-palette-btn" data-palette="3" onclick="setDiffPalette(3)" title="Sunset & Ocean"><div class="diff-palette-btn-left"></div><div class="diff-palette-btn-right"></div></div>
+            <div class="diff-palette-btn" data-palette="4" onclick="setDiffPalette(4)" title="Berry & Lime"><div class="diff-palette-btn-left"></div><div class="diff-palette-btn-right"></div></div>
+            <div class="diff-palette-btn" data-palette="5" onclick="setDiffPalette(5)" title="Salmon & Seafoam"><div class="diff-palette-btn-left"></div><div class="diff-palette-btn-right"></div></div>
+            <div class="diff-palette-btn" data-palette="6" onclick="setDiffPalette(6)" title="Ruby & Jade"><div class="diff-palette-btn-left"></div><div class="diff-palette-btn-right"></div></div>
+            <div class="diff-palette-btn" data-palette="7" onclick="setDiffPalette(7)" title="Peach & Aqua"><div class="diff-palette-btn-left"></div><div class="diff-palette-btn-right"></div></div>
+            <div class="diff-palette-btn" data-palette="8" onclick="setDiffPalette(8)" title="Magenta & Cyan"><div class="diff-palette-btn-left"></div><div class="diff-palette-btn-right"></div></div>
+          </div>
+          <div class="diff-viewer-split">
+            <div class="diff-hunks">
+              ${hunks.map((hunk, index) => renderSplitHunk(hunk, index)).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+            }
+            showThemeDiffModal();
+          } catch (error) {
+            showNotification('Error loading file: ' + error.message, 'error');
+          }
+        });
+      });
+    }
+
+    // Show Theme diff modal
+    function showThemeDiffModal() {
+      const modal = document.getElementById('diffModal');
+      const status = themeFileStatuses[selectedThemeFile.name];
+      const noChanges = themeBackupContent === themeLiveContent;
+
+      document.getElementById('diffTitle').textContent = selectedThemeFile.name;
+
+      const modalBody = document.getElementById('diffModalBody');
+
+      // Apply saved palette preference
+
+
+      // Hide close button for all states
+      document.getElementById('closeDiff').style.display = 'none';
+
+      if (!themeLiveContent) {
+        // Deleted state
+        document.getElementById('diffSubtitle').innerHTML = `<span>${formatFolderName(currentBackupName, currentBackupMtime)}</span>`; modalBody.innerHTML = `
+          <div class="diff-state-block">
+            <div class="diff-state-banner diff-state-banner-deleted">
+              <span class="diff-state-label">${getStyledText('ui.diffViewer.fileDeleted')}</span>
+            </div>
+            <pre class="code-viewer"><code>${themeBackupContent}</code></pre>
+          </div>
+        `;
+      } else if (noChanges) {
+        // Unchanged state
+        document.getElementById('diffSubtitle').textContent = getStyledText('ui.diffViewer.noChanges');
+        document.getElementById('closeDiff').style.display = 'none';
+        modalBody.innerHTML = `
+          <div class="diff-state-block">
+            <div class="diff-state-banner diff-state-banner-unchanged">
+              <span class="diff-state-label">${getStyledText('ui.diffViewer.currentVersion')}</span>
+            </div>
+            <pre class="code-viewer"><code>${themeBackupContent}</code></pre>
+          </div>
+        `;
+      } else {
+        // Changed state - side by side comparison with diff highlighting
+        document.getElementById('diffSubtitle').textContent = getStyledText('ui.diffViewer.compareVersions');
+        const backupTimestamp = currentBackupName ? formatFolderName(currentBackupName, currentBackupMtime) : '';
+        const diffHtml = generateDiff(themeLiveContent, themeBackupContent, {
+          leftLabel: getStyledText('ui.diffViewer.liveVersion'),
+          rightLabel: getStyledText('ui.diffViewer.backupVersion'),
+          rightMeta: backupTimestamp,
+          bannerText: formatFolderName(currentBackupName, currentBackupMtime)
+        });
+        modalBody.innerHTML = `
+          ${diffHtml}
+        `;
+      }
+
+      setDiffPalette(currentPalette);
+      modal.style.display = 'flex';
+    }
+
+    // Restore Theme file
+    async function restoreThemeFile() {
+      if (!selectedThemeFile) return;
+
+      try {
+        const response = await fetch(url('/api/restore-file'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: "theme",
+            fileName: selectedThemeFile.name,
+            content: themeBackupContent,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            liveConfigPath: haConfig.liveConfigPath
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error('Restore failed');
+        }
+
+        document.getElementById('diffModal').style.display = 'none';
+
+        // Reload Home Assistant if configured
+        if (haConfig && haConfig.haAuthConfigured) {
+          const service = 'theme.reload';
+          try {
+            const reloadResponse = await fetch(url('/api/reload-home-assistant'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ service })
+            });
+            if (!reloadResponse.ok) {
+              throw new Error('Reload request failed');
+            }
+            showRestartNotification(getStyledText('notifications.themeRestored') || 'Theme successfully restored! Restart Home Assistant to see changes.', haConfig);
+          } catch (reloadError) {
+            console.error('[restoreThemeFile] Reload error:', reloadError);
+            showRestartNotification(getStyledText('notifications.themeRestored') || 'Theme successfully restored! Restart Home Assistant to see changes.', haConfig);
+          }
+        } else {
+          showRestartNotification(getStyledText('notifications.themeRestored') || 'Theme successfully restored! Restart Home Assistant to see changes.', haConfig);
+        }
+
+        // Reload items
+        await loadThemeFiles();
+      } catch (error) {
+        console.error('[restoreThemeFile] Error:', error);
+        showNotification(getStyledText('notifications.errorGeneric', { error: error.message }) || ('Error restoring file: ' + error.message), 'error');
+      }
+    }
+
 
     // Load Lovelace files
     async function loadLovelaceFiles() {
