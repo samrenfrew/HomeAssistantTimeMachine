@@ -2288,8 +2288,12 @@ body[data-theme='light'] #backupList .list-item {
 
   .panel {
     min-height: 0;
-    max-height: 50vh;
+    /* max-height: 50vh; */
     overflow-y: auto;
+  }
+
+  .content > .panel:first-of-type {
+    max-height: 40vh;
   }
 
   .diff-container {
