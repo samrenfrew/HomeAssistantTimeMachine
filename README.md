@@ -4,10 +4,12 @@ Home Assistant Time Machine is a web-based tool that acts as a "Time Machine" fo
 
 ## What's New!
 
-*   **Smart Backup:** Incremental snapshots only save files that changed since your last backup. It looks complete in the UI but uses significantly less storage.
-*   **Show Changes Only:** Filter snapshots and files to just what has changed or deleted compared to your live config. This works per tab in both the snapshot list and file view.
-*   **Automation Triggers:** Backups can now be triggered from automations or scripts via `hassio.addon_stdin`. This is useful for scheduled, conditional, or event-driven backups.
-*   **Diff Color Palettes:** Eight new color palettes in the diff viewer which are switchable directly by clicking the header bar.
+*   **Backup Lock, Deletion & Export:** Added a new backup lock feature to prevent accidental deletion of snapshots. You can now also manually delete or export individual backups as .tar.gz archives directly from the web UI using the new right-click context menu.
+*   **HACS Integration:** Now available as a companion integration via HACS! Track backup status with a native sensor and trigger backups using the `time_machine.backup_now` service.
+*   **Keyboard Navigation:** Navigate backups and items using arrow keys! Use Up/Down to change selection and Left/Right to switch between panels. Press Enter on an item to view its diff.
+*   **Manifest-Driven Backups & Restoration:** Every backup now includes a detailed file manifest, ensuring that restores and change detection are perfectly aware of where your files live and are automatically placed back exactly where they belong in your YAML structure.
+*   **Docker Env Var:** Added `ESPHOME_CONFIG_PATH` environment variable support for Docker installations, allowing custom locations for ESPHome configuration files.
+*   **Split Config Support:** Optimized for advanced Home Assistant setups using `!include`, `!include_dir_list`, and other split configuration methods.
 
 ![Screenshot 1](https://raw.githubusercontent.com/saihgupr/HomeAssistantTimeMachine/main/images/1.png)
 ![Screenshot 2](https://raw.githubusercontent.com/saihgupr/HomeAssistantTimeMachine/main/images/2.png)
@@ -19,14 +21,19 @@ Home Assistant Time Machine is a web-based tool that acts as a "Time Machine" fo
 ## Features
 
 *   **Browse Backups:** Easily browse through your Home Assistant backup YAML files.
+*   **View Changes & Diff Palettes:** See side-by-side diffs with 8 vibrant color palettes to choose from.
 *   **Restore Individual Items:** Restore individual automations or scripts without having to restore an entire backup.
+*   **Smart Backup:** Incremental backup mode that only saves changed files, significantly reducing storage usage.
+*   **Show Changes Only:** Filter backups to only show snapshots that contain changed or deleted items compared to live config.
 *   **Safety First:** Automatically creates a backup before restoring anything.
 *   **Reload Home Assistant:** Reload automations or scripts directly from the UI after a restore.
 *   **Scheduled Backups:** Configure automatic backups on a schedule.
+*   **Service Call Support:** Trigger backups from Home Assistant automations or scripts using the `hassio.addon_stdin` service.
 *   **Multi-language Support:** Available in English, Spanish, German, French, Dutch, and Italian.
 *   **Ingress Support:** Access through the Home Assistant UI without port forwarding.
 *   **Lovelace, ESPHome & Packages:** Full support for backing up and restoring dashboards, ESPHome files, and package configurations.
 *   **Max Backups & Flexible Locations:** Control retention limits and store backups in `/share`, `/backup`, `/media`, or remote shares.
+*   **Backup Lock & Context Menu:** Prevent accidental deletion by locking your favorite backups. Right-click any backup to Lock, Unlock, Export, or Delete it instantly.
 *   **REST API:** Full API for programmatic backup management.
 
 ## Installation
@@ -51,7 +58,8 @@ There are two ways to install Home Assistant Time Machine: as a Home Assistant a
 2.  **Install the Add-on:**
     The "Home Assistant Time Machine" add-on will now appear in the store. Click on it and then click "Install".
 
-### 2. Standalone Docker Installation
+<details>
+<summary><h3>2. Standalone Docker Installation</h3></summary>
 
 For Docker users who aren't using the Home Assistant add-on, you have three deployment options:
 
@@ -79,6 +87,9 @@ docker run -d \
   -p 54000:54000 \
   -e HOME_ASSISTANT_URL="http://your-ha-instance:8123" \
   -e LONG_LIVED_ACCESS_TOKEN="your-long-lived-access-token" \
+  -e ESPHOME_CONFIG_PATH="/path/to/esphome/config" \
+  -e THEME="dark" \
+  -e DEBUG_LOGS="false" \
   -v /path/to/your/ha/config:/config \
   -v /path/to/your/backups:/media \
   -v ha-time-machine-data:/data \
@@ -97,6 +108,9 @@ docker run -d \
   -p 54000:54000 \
   -e HOME_ASSISTANT_URL="http://your-ha-instance:8123" \
   -e LONG_LIVED_ACCESS_TOKEN="your-long-lived-access-token" \
+  -e ESPHOME_CONFIG_PATH="/path/to/esphome/config" \
+  -e THEME="dark" \
+  -e DEBUG_LOGS="false" \
   -v /path/to/your/ha/config:/config \
   -v /path/to/your/backups:/media \
   -v ha-time-machine-data:/data \
@@ -129,11 +143,84 @@ Adjust the payload if you need different paths, theme, or want to enable/disable
 
 After starting the container, access the web interface at `http://localhost:54000` (or your server's IP/port).
 
-**Note:** The HA URL and token fields in settings will be read-only if configured via environment variables, or editable if configured through the web UI.
+> [!NOTE]
+> The HA URL and token fields in settings will be read-only if configured via environment variables, or editable if configured through the web UI.
+
+</details>
+
+<details>
+<summary><h3>HACS Companion Integration</h3></summary>
+
+Enhance your Home Assistant experience by adding the Time Machine companion integration via HACS. This provides:
+- **Sensors:** Track backup status and health directly in Home Assistant.
+- **Services:** Trigger backups using native `time_machine.backup_now` service calls in your automations.
+
+#### Installation & Setup:
+
+<a href="https://my.home-assistant.io/redirect/hacs_repository/?owner=saihgupr&repository=HomeAssistantTimeMachine&category=integration">
+  <img src="https://my.home-assistant.io/badges/hacs_repository.svg" alt="Open your Home Assistant instance and open a repository inside the Home Assistant Community Store." />
+</a>
+
+**Or manually add the custom repository:**
+
+1. Ensure [HACS](https://hacs.xyz/) is installed.
+2. In Home Assistant, go to **HACS** → **Integrations**.
+3. Click the three dots (⋮) in the top right and select **Custom repositories**.
+4. Add `https://github.com/saihgupr/HomeAssistantTimeMachine` as an **Integration**.
+5. Find **Home Assistant Time Machine** in HACS and click **Download**.
+6. Go to **Settings** → **Devices & Services**.
+7. Click **Add Integration** in the bottom right and search for **Home Assistant Time Machine**.
+8. Follow the UI prompts.
+   * If installed via the official Home Assistant Add-on, it will automatically discover the instance!
+   * If installed via Docker (or if auto-discovery fails), you will be prompted to enter the instance URL.
+
+> [!IMPORTANT]
+> **Docker Users:** Use the internal container name (e.g., `http://ha-time-machine:54000`) if they share a network, or your server's LAN IP if they are on separate hosts. 
+> - **Note:** If `sensor.time_machine_status` shows as `Offline`, it usually means Home Assistant cannot reach the Time Machine API at that address.
+
+#### Sensor: `sensor.time_machine_status`
+Monitor your backup system health directly in Home Assistant.
+
+| Attribute | Description | Example |
+| :--- | :--- | :--- |
+| `state` | Current status of the instance | `Online` |
+| `version` | Running version | `2.3.1` |
+| `backup_count` | Total number of backups stored | `764` |
+| `last_backup` | Timestamp of the last backup | `2026-02-17-000000` |
+| `disk_total_gb` | Total storage space | `111.73` |
+| `disk_free_gb` | Available storage space | `13.68` |
+| `disk_used_pct` | Storage usage percentage | `87.8%` |
+| `last_backup_status` | Status of the most recent run | `success` |
+
+#### Action: `time_machine.backup_now`
+Trigger backups via service calls in your automations or scripts.
+
+| Parameter | Description | Example |
+| :--- | :--- | :--- |
+| `url` | (Optional) The URL of your Time Machine instance. Uses the integration's configured URL if left blank. | `http://192.168.1.4:54000` |
+| `smart_backup_enabled` | Only backup if changes are detected compared to the last snapshot. | `true` |
+| `max_backups_enabled` | Whether to enforce the maximum number of backups to keep. | `true` |
+| `max_backups_count` | The number of backups to keep before removing oldest ones. | `100` |
+| `live_config_path` | The source path in the container to backup (default is `/config`). | `/config` |
+| `backup_folder_path` | The destination path in the container for backups (default is `/media/timemachine`). | `/media/timemachine` |
+| `timezone` | The timezone to use for the backup folder name (e.g., `America/New_York`). | `America/New_York` |
+
+**Example Automation:**
+```yaml
+action: time_machine.backup_now
+data:
+  smart_backup_enabled: true
+  max_backups_enabled: true
+  max_backups_count: 100
+  timezone: "America/New_York"
+```
+
+</details>
 
 ## Usage
 
-> **Tip:** If you expose port `54000/tcp` (for example, via the add-on's Configuration tab), you can open the UI directly at `http://your-host:54000` without relying on ingress.
+> [!TIP]
+> If you expose port `54000/tcp` (for example, via the add-on's Configuration tab), you can open the UI directly at `http://your-host:54000` without relying on ingress.
 
 ### Home Assistant add-on
 
@@ -158,6 +245,7 @@ After starting the container, access the web interface at `http://localhost:5400
 
 ### Triggering Backups from Automations
 
+**Basic Method (Add-on built-in):**
 You can trigger a backup from Home Assistant automations or scripts using the `hassio.addon_stdin` service:
 
 ```yaml
@@ -167,13 +255,17 @@ data:
   input: backup
 ```
 
-> **Note:** Replace `0f6ec05b_homeassistant-time-machine` with your addon's slug if different.
+> [!NOTE]
+> Replace `0f6ec05b_homeassistant-time-machine` with your addon's slug if different.
+
+For more control over your backups (like setting a custom timezone, limiting max backups, or only backing up when changes occur), install the [HACS Companion Integration](#hacs-companion-integration) and use the `time_machine.backup_now` service instead.
 
 ## Backup to Remote Share
 
 To configure backups to a remote share, first set up network storage within Home Assistant (Settings > System > Storage > 'Add network storage'). Name the share 'backups' and set its usage to 'Media'. Once configured, you can then specify the backup path in Home Assistant Time Machine settings as '/media/backups', which will direct backups to your remote share.
 
-## API Endpoints
+<details>
+<summary><h2>API Endpoints</h2></summary>
 
 - **POST /api/backup-now**: Trigger an immediate backup. Requires `liveFolderPath` and `backupFolderPath`. Optional parameters (`smartBackupEnabled`, `maxBackupsEnabled`, `maxBackupsCount`, `timezone`) fall back to saved settings when not provided.
 - **POST /api/restore-automation** / **POST /api/restore-script**: Restore a single automation or script after creating a safety backup.
@@ -202,6 +294,8 @@ curl -X POST http://localhost:54000/api/scan-backups \
   -d '{"backupRootPath": "/media/timemachine"}'
 ```
 
+</details>
+
 ## Alternative Options
 
 For detailed history tracking powered by a local Git backend, check out [Home Assistant Version Control](https://github.com/saihgupr/HomeAssistantVersionControl/). It provides complete version history for your setup by automatically tracking every change to your YAML files.
@@ -218,10 +312,6 @@ Thank you to everyone who has written about or featured Home Assistant Time Mach
 
 ## Contributing & Support
 
-Contributions are welcome! Check out [contribution guidelines](CONTRIBUTING.md) for more details.
+If you encounter a bug or have a feature request, feel free to [open an issue](https://github.com/saihgupr/HomeAssistantTimeMachine/issues). If you'd like to contribute, check out the [contribution guidelines](CONTRIBUTING.md).
 
-If you encounter a bug or have a feature request, feel free to [open an issue](https://github.com/saihgupr/HomeAssistantTimeMachine/issues).
-
-If you'd like to buy me a coffee, you can do so [here](https://ko-fi.com/saihgupr).
-
-**If you find this add-on helpful, please ⭐ star the repository!**
+If you find this add-on useful, consider giving it a ⭐ star or making a [donation](https://ko-fi.com/saihgupr) to support development.
